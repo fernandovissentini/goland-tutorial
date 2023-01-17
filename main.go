@@ -1,44 +1,48 @@
 package main
 
 import (
-	"fmt"
-	"io"
+	"context"
+	"golang/handlers"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"time"
 )
 
 func main() {
-	http.HandleFunc("/", func(responseWriter http.ResponseWriter, r *http.Request) {
-		globalGet(responseWriter, r)
-	})
 
-	http.HandleFunc("/goodbye", func(w http.ResponseWriter, r *http.Request) {
-		goodbyePath()
-	})
+	l := log.New(os.Stdout, "product-api", log.LstdFlags)
+	hh := handlers.NewHello(l)
+	gh := handlers.NewGoodbye(l)
 
-	err := http.ListenAndServe(":9090", nil)
-	if err != nil {
-		log.Printf("Error: %s", err.Error())
-		return
+	sm := http.NewServeMux()
+	sm.Handle("/", hh)
+	sm.Handle("/goodbye", gh)
+
+	s := &http.Server{
+		Addr:         ":9090",
+		Handler:      sm,
+		IdleTimeout:  120 * time.Second,
+		ReadTimeout:  1 * time.Second,
+		WriteTimeout: 1 * time.Second,
 	}
-}
 
-func goodbyePath() {
-	log.Println("Goodbye World")
-}
+	go func() {
+		err := s.ListenAndServe()
+		if err != nil {
+			log.Fatal("Error: %s", err.Error())
+			return
+		}
+	}()
 
-func globalGet(responseWriter http.ResponseWriter, r *http.Request) {
-	log.Println("Hello World")
-	data, err1 := io.ReadAll(r.Body)
-	if err1 != nil || len(data) < 1 {
-		http.Error(responseWriter, "Error, no body", http.StatusBadRequest)
-		return
-	}
-	log.Printf("Data %s", data)
+	sigChannel := make(chan os.Signal)
+	signal.Notify(sigChannel, os.Interrupt)
+	signal.Notify(sigChannel, os.Kill)
 
-	_, err := fmt.Fprintf(responseWriter, "Hello %s", data)
-	if err != nil {
-		log.Printf("Error: %s", err.Error())
-		return
-	}
+	sig := <-sigChannel
+	log.Println("Received terminate, Graceful shutdown", sig)
+
+	tc, _ := context.WithTimeout(context.Background(), 30*time.Second)
+	s.Shutdown(tc)
 }
